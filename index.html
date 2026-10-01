@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Realistic Mario – 1-1 Inspired</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #1a1a2e;
+      color: #eee;
+      font-family: system-ui, -apple-system, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    h1 {
+      font-size: 1.6rem;
+      margin-bottom: 6px;
+      color: #ff6b6b;
+    }
+    .subtitle {
+      font-size: 0.95rem;
+      color: #aaa;
+      margin-bottom: 16px;
+      text-align: center;
+      max-width: 640px;
+    }
+    canvas {
+      background: #87CEEB;
+      border: 3px solid #333;
+      border-radius: 8px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+      max-width: 100%;
+      image-rendering: pixelated;
+    }
+    .hud-info {
+      margin-top: 12px;
+      font-size: 0.9rem;
+      color: #ccc;
+      text-align: center;
+    }
+    .controls {
+      margin-top: 8px;
+      font-size: 0.85rem;
+      color: #888;
+    }
+    a { color: #7fdbff; }
+  </style>
+</head>
+<body>
+  <h1>Realistic Mario</h1>
+  <p class="subtitle">
+    Level 1-1 inspired prototype. Jump into bricks = head trauma. Stay in water too long = drown.<br>
+    Original level layout (not a Nintendo asset dump).
+  </p>
+  <canvas id="game" width="800" height="480"></canvas>
+  <div class="hud-info" id="status">Loading…</div>
+  <div class="controls">
+    Arrow keys / WASD + Space to jump &nbsp;|&nbsp; R = restart after death &nbsp;|&nbsp; Esc = pause
+  </div>
+  <p style="margin-top:18px;font-size:0.8rem;color:#666">
+    Sprite concept from <a href="https://mfgg.net/index.php?act=resdb&param=02&c=1&id=34896" target="_blank">John_Santos / MFGG</a>
+    · Code on <a href="https://github.com/restii-dev/realistic-mario-1-1" target="_blank">GitHub</a>
+  </p>
+
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    const statusEl = document.getElementById('status');
+
+    // Config
+    const W = 800, H = 480;
+    const GRAVITY = 0.55;
+    const JUMP = -11.5;
+    const SPEED = 3.8;
+
+    // Input
+    const keys = {};
+    window.addEventListener('keydown', e => { keys[e.code] = true; if (['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault(); });
+    window.addEventListener('keyup', e => { keys[e.code] = false; });
+
+    // Level data (original inspired layout)
+    const platforms = [
+      // ground
+      {x:0, y:400, w:600, h:80, brick:false, color:'#228B22'},
+      {x:700, y:400, w:400, h:80, brick:false, color:'#228B22'},
+      {x:1200, y:400, w:500, h:80, brick:false, color:'#228B22'},
+      {x:1800, y:400, w:800, h:80, brick:false, color:'#228B22'},
+      {x:2700, y:400, w:600, h:80, brick:false, color:'#228B22'},
+      // bricks (deadly on head)
+      {x:250, y:280, w:32, h:32, brick:true, color:'#B46432'},
+      {x:300, y:280, w:32, h:32, brick:true, color:'#B46432'},
+      {x:350, y:280, w:32, h:32, brick:true, color:'#B46432'},
+      {x:900, y:250, w:32, h:32, brick:true, color:'#B46432'},
+      {x:950, y:250, w:96, h:32, brick:true, color:'#B46432'},
+      {x:1400, y:220, w:32, h:32, brick:true, color:'#B46432'},
+      {x:1450, y:220, w:32, h:32, brick:true, color:'#B46432'},
+      {x:1500, y:220, w:32, h:32, brick:true, color:'#B46432'},
+      {x:2000, y:280, w:128, h:32, brick:true, color:'#B46432'},
+      // pipes
+      {x:500, y:336, w:64, h:64, brick:false, color:'#009600'},
+      {x:1100, y:304, w:64, h:96, brick:false, color:'#009600'},
+      {x:1600, y:336, w:64, h:64, brick:false, color:'#009600'},
+      {x:2300, y:272, w:64, h:128, brick:false, color:'#009600'},
+      // stairs
+      {x:2500, y:368, w:160, h:32, brick:false, color:'#8B4513'},
+      {x:2532, y:336, w:128, h:32, brick:false, color:'#8B4513'},
+      {x:2564, y:304, w:96, h:32, brick:false, color:'#8B4513'},
+      {x:2596, y:272, w:64, h:32, brick:false, color:'#8B4513'},
+      {x:2628, y:240, w:32, h:32, brick:false, color:'#8B4513'},
+    ];
+
+    const waters = [
+      {x:600, y:420, w:100, h:80},
+      {x:1700, y:420, w:100, h:80},
+    ];
+
+    const GOAL_X = 3000;
+
+    // Player
+    let player = {
+      x: 80, y: 300,
+      vx: 0, vy: 0,
+      w: 26, h: 38,
+      onGround: false,
+      facing: 1,
+      alive: true,
+      oxygen: 100,
+      deathReason: '',
+      deathTimer: 0
+    };
+
+    let camX = 0;
+    let won = false;
+
+    function reset() {
+      player = {
+        x: 80, y: 300,
+        vx: 0, vy: 0,
+        w: 26, h: 38,
+        onGround: false,
+        facing: 1,
+        alive: true,
+        oxygen: 100,
+        deathReason: '',
+        deathTimer: 0
+      };
+      camX = 0;
+      won = false;
+    }
+
+    function die(reason) {
+      if (!player.alive) return;
+      player.alive = false;
+      player.deathReason = reason;
+      player.vy = -6;
+      player.deathTimer = 0;
+    }
+
+    function update() {
+      if (won) return;
+
+      if (!player.alive) {
+        player.deathTimer++;
+        player.vy += GRAVITY * 0.45;
+        player.y += player.vy;
+        return;
+      }
+
+      // Input
+      player.vx = 0;
+      if (keys['ArrowLeft'] || keys['KeyA']) { player.vx = -SPEED; player.facing = -1; }
+      if (keys['ArrowRight'] || keys['KeyD']) { player.vx = SPEED; player.facing = 1; }
+
+      if ((keys['Space'] || keys['KeyW'] || keys['ArrowUp']) && player.onGround) {
+        player.vy = JUMP;
+        player.onGround = false;
+      }
+
+      // Water check
+      const inWater = waters.some(w =>
+        player.x < w.x + w.w && player.x + player.w > w.x &&
+        player.y < w.y + w.h && player.y + player.h > w.y
+      );
+
+      if (inWater) {
+        player.vy += GRAVITY * 0.28;
+        player.vy = Math.max(-3.5, Math.min(2.8, player.vy));
+        player.oxygen -= 0.38;
+        if (player.oxygen <= 0) die('drowned');
+      } else {
+        player.vy += GRAVITY;
+        player.oxygen = Math.min(100, player.oxygen + 0.7);
+      }
+
+      player.x += player.vx;
+      player.y += player.vy;
+
+      // Collisions
+      player.onGround = false;
+      const pr = {x: player.x, y: player.y, w: player.w, h: player.h};
+
+      for (const p of platforms) {
+        if (pr.x < p.x + p.w && pr.x + pr.w > p.x &&
+            pr.y < p.y + p.h && pr.y + pr.h > p.y) {
+
+          // Headbonk (coming from below)
+          if (player.vy < 0 && pr.y < p.y + p.h && (pr.y + pr.h/2) > (p.y + p.h/2)) {
+            if (p.brick) {
+              die('head trauma from brick');
+              return;
+            }
+            player.y = p.y + p.h;
+            player.vy = 0;
+          }
+          // Land on top
+          else if (player.vy >= 0 && pr.y + pr.h > p.y && (pr.y + pr.h/2) < (p.y + p.h/2)) {
+            player.y = p.y - player.h;
+            player.vy = 0;
+            player.onGround = true;
+          }
+          // Sides
+          else if (player.vx > 0) {
+            player.x = p.x - player.w;
+          } else if (player.vx < 0) {
+            player.x = p.x + p.w;
+          }
+        }
+      }
+
+      if (player.y > H + 60) die('fell into the abyss');
+      if (player.x < 0) player.x = 0;
+      if (player.x > 3200) player.x = 3200;
+
+      if (player.x > GOAL_X) won = true;
+    }
+
+    function drawRect(x, y, w, h, color) {
+      ctx.fillStyle = color;
+      ctx.fillRect(Math.round(x - camX), Math.round(y), w, h);
+    }
+
+    function draw() {
+      // Sky
+      ctx.fillStyle = '#87CEEB';
+      ctx.fillRect(0, 0, W, H);
+
+      // Clouds
+      ctx.fillStyle = '#fff';
+      for (let cx = 0; cx < 3400; cx += 280) {
+        const sx = cx - camX;
+        ctx.beginPath();
+        ctx.ellipse(sx + 40, 70, 45, 18, 0, 0, Math.PI * 2);
+        ctx.ellipse(sx + 70, 60, 35, 16, 0, 0, Math.PI * 2);
+        ctx.ellipse(sx + 20, 65, 30, 14, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Water
+      for (const w of waters) {
+        const sx = w.x - camX;
+        ctx.fillStyle = '#1E64C8';
+        ctx.fillRect(sx, w.y, w.w, w.h);
+        ctx.fillStyle = 'rgba(100,180,255,0.5)';
+        for (let i = 0; i < w.w; i += 18) {
+          ctx.beginPath();
+          ctx.arc(sx + i + 9, w.y + 4, 8, Math.PI, 0);
+          ctx.fill();
+        }
+      }
+
+      // Platforms
+      for (const p of platforms) {
+        drawRect(p.x, p.y, p.w, p.h, p.color);
+        if (p.brick) {
+          ctx.strokeStyle = '#783C1E';
+          ctx.lineWidth = 1;
+          for (let i = 0; i < p.w; i += 16) {
+            ctx.beginPath();
+            ctx.moveTo(p.x - camX + i, p.y);
+            ctx.lineTo(p.x - camX + i, p.y + p.h);
+            ctx.stroke();
+          }
+          ctx.beginPath();
+          ctx.moveTo(p.x - camX, p.y + p.h / 2);
+          ctx.lineTo(p.x - camX + p.w, p.y + p.h / 2);
+          ctx.stroke();
+        }
+        // Pipe detail
+        if (p.color === '#009600') {
+          ctx.fillStyle = '#00B400';
+          ctx.fillRect(p.x - camX - 4, p.y, p.w + 8, 12);
+        }
+      }
+
+      // Goal pole
+      const gx = GOAL_X - camX;
+      if (gx > -20 && gx < W + 20) {
+        ctx.fillStyle = '#ccc';
+        ctx.fillRect(gx, 200, 7, 200);
+        ctx.fillStyle = '#e74c3c';
+        ctx.beginPath();
+        ctx.moveTo(gx + 7, 200);
+        ctx.lineTo(gx + 48, 218);
+        ctx.lineTo(gx + 7, 236);
+        ctx.fill();
+      }
+
+      // Player (simple but clear)
+      const px = Math.round(player.x - camX);
+      const py = Math.round(player.y);
+
+      if (player.alive) {
+        // Body
+        ctx.fillStyle = '#e74c3c'; // red overalls vibe
+        ctx.fillRect(px + 4, py + 14, 18, 20);
+        // Head
+        ctx.fillStyle = '#f5c6a5';
+        ctx.fillRect(px + 5, py + 2, 16, 14);
+        // Hat
+        ctx.fillStyle = '#c0392b';
+        ctx.fillRect(px + 3, py, 20, 7);
+        ctx.fillRect(px + 7, py - 3, 12, 5);
+        // Eyes
+        ctx.fillStyle = '#222';
+        if (player.facing > 0) {
+          ctx.fillRect(px + 14, py + 6, 3, 3);
+        } else {
+          ctx.fillRect(px + 9, py + 6, 3, 3);
+        }
+        // Boots
+        ctx.fillStyle = '#5d3a1a';
+        ctx.fillRect(px + 3, py + 32, 9, 6);
+        ctx.fillRect(px + 14, py + 32, 9, 6);
+      } else {
+        // Dead pose – flat / spinning vibe
+        ctx.save();
+        ctx.translate(px + 13, py + 19);
+        ctx.rotate(player.deathTimer * 0.15);
+        ctx.fillStyle = '#e74c3c';
+        ctx.fillRect(-13, -10, 26, 20);
+        ctx.fillStyle = '#f5c6a5';
+        ctx.fillRect(-10, -18, 20, 12);
+        ctx.fillStyle = '#c0392b';
+        ctx.fillRect(-12, -22, 24, 7);
+        ctx.restore();
+      }
+
+      // HUD bar
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(0, 0, W, 36);
+      ctx.fillStyle = '#fff';
+      ctx.font = '15px system-ui';
+      ctx.fillText('Realistic Mario – 1-1 Inspired', 12, 23);
+
+      // Oxygen
+      const o2Color = player.oxygen > 30 ? '#2ecc71' : '#e74c3c';
+      ctx.fillStyle = o2Color;
+      ctx.fillText(`O₂ ${Math.max(0, Math.floor(player.oxygen))}%`, 320, 23);
+
+      // Death / Win overlays
+      if (!player.alive) {
+        ctx.fillStyle = 'rgba(0,0,0,0.65)';
+        ctx.fillRect(0, 0, W, H);
+        ctx.fillStyle = '#e74c3c';
+        ctx.font = 'bold 42px system-ui';
+        ctx.textAlign = 'center';
+        ctx.fillText('YOU DIED', W/2, 190);
+        ctx.fillStyle = '#fff';
+        ctx.font = '20px system-ui';
+        ctx.fillText('Cause: ' + player.deathReason, W/2, 235);
+        ctx.font = '16px system-ui';
+        ctx.fillText('Press R to try again', W/2, 275);
+        ctx.textAlign = 'left';
+      }
+
+      if (won) {
+        ctx.fillStyle = 'rgba(0,60,0,0.7)';
+        ctx.fillRect(0, 0, W, H);
+        ctx.fillStyle = '#2ecc71';
+        ctx.font = 'bold 42px system-ui';
+        ctx.textAlign = 'center';
+        ctx.fillText('LEVEL CLEAR!', W/2, 210);
+        ctx.fillStyle = '#fff';
+        ctx.font = '18px system-ui';
+        ctx.fillText('You survived the realism.', W/2, 255);
+        ctx.textAlign = 'left';
+      }
+    }
+
+    function loop() {
+      // Restart
+      if (keys['KeyR'] && !player.alive) {
+        reset();
+        keys['KeyR'] = false;
+      }
+
+      update();
+
+      // Camera
+      const target = player.x - W * 0.35;
+      camX += (target - camX) * 0.12;
+      camX = Math.max(0, Math.min(camX, 3200 - W));
+
+      draw();
+
+      // Status text
+      if (player.alive && !won) {
+        statusEl.textContent = `x: ${Math.floor(player.x)}   |   O₂: ${Math.floor(player.oxygen)}%`;
+      } else if (!player.alive) {
+        statusEl.textContent = `Dead – ${player.deathReason}`;
+      } else {
+        statusEl.textContent = 'You made it!';
+      }
+
+      requestAnimationFrame(loop);
+    }
+
+    reset();
+    loop();
+  </script>
+</body>
+</html>
